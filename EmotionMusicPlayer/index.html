@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Emotion Music Player</title>
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
+    <script src="https://sdk.scdn.co/spotify-player.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Poppins", sans-serif;
+            background: linear-gradient(135deg, #1db954 30%, #121212);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        h1,
+        h2,
+        h3 {
+            font-weight: bold;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0px 8px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .header {
+            background: #1db954;
+            padding: 20px;
+            text-align: center;
+            border-bottom: 3px solid #191414;
+        }
+
+        .header h1 {
+            color: white;
+            font-size: 2.5rem;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            padding: 30px;
+        }
+
+        .section {
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 15px;
+        }
+
+        #webcam-container {
+            position: relative;
+            text-align: center;
+        }
+
+        #video,
+        #canvas {
+            border-radius: 10px;
+        }
+
+        #video {
+            width: 100%;
+            max-width: 600px;
+            margin-bottom: 10px;
+        }
+
+        button {
+            padding: 12px 20px;
+            font-size: 16px;
+            background: #1db954;
+            border: none;
+            border-radius: 25px;
+            color: white;
+            cursor: pointer;
+            transition: background 0.3s ease, transform 0.2s ease;
+        }
+
+        button:hover {
+            background: #1ed760;
+            transform: translateY(-3px);
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        .track-list {
+            list-style: none;
+            margin-top: 20px;
+            padding: 0;
+        }
+
+        .track-item {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .track-item:hover {
+            background: rgba(0, 0, 0, 0.5);
+        }
+
+        .now-playing {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .error-message {
+            color: red;
+            font-weight: bold;
+            margin-top: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AI Emotion Music Player</h1>
+        </div>
+        <div id="login-section" style="text-align: center; padding: 20px">
+            <button id="login-button">Login with Spotify</button>
+            <p id="login-error" class="error-message" style="display: none">
+                Error Logging In. Please try again
+            </p>
+        </div>
+        <div id="player-interface" style="display: none">
+            <div class="main-content">
+                <div class="section webcam-section">
+                    <div id="webcam-container">
+                        <video id="video" autoplay muted playsinline></video>
+                        <canvas id="canvas"></canvas>
+                    </div>
+                    <div style="margin-top: 20px; text-align: center">
+                        <button id="start-detection">Start Detection</button>
+                        <button id="stop-detection" disabled>Stop Detection</button>
+                    </div>
+                    <p id="status" style="margin-top: 10px; text-align: center; font-size: 14px">
+                        Status: Idle
+                    </p>
+                    <p id="detection-error" class="error-message" style="display: none"></p>
+                </div>
+                <div class="section player-section">
+                    <h2>Emotion Detected: <span id="emotion">Neutral</span></h2>
+                    <div class="now-playing">
+                        <h3>Now Playing:</h3>
+                        <p id="current-track">Nothing playing</p>
+                    </div>
+                    <ul class="track-list" id="playlist"></ul>
+                    <p id="player-error" class="error-message" style="display: none"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Replace with your Spotify Client ID
+        const CLIENT_ID = "cfbd66d642a247b59e82aa058569dfd9";
+        const REDIRECT_URI = "http://localhost:5500/callback";
+
+        // Spotify emotion playlists (replace with your playlist IDs)
+        const EMOTION_PLAYLISTS = {
+            happy: "spotify:playlist:37i9dQZF1DX0UrRvztWcAU",
+            sad: "spotify:playlist:37i9dQZF1DX7qK8ma5wgG1",
+            angry: "spotify:playlist:37i9dQZF1DX1tyCD9QhIWF",
+            neutral: "spotify:playlist:37i9dQZF1DX4sWSpwq3LiO",
+        };
+
+        let accessToken = null;
+        let player = null;
+        let isDetecting = false;
+        let currentEmotion = "neutral";
+
+        // Initialize Spotify Web Playback SDK
+        window.onSpotifyWebPlaybackSDKReady = () => {
+            const token = getAccessToken();
+            if (token) {
+                initializePlayer(token);
+            }
+        };
+
+        // Spotify Authentication
+        document.getElementById("login-button").addEventListener("click", () => {
+            const scopes =
+                "streaming user-read-email user-read-private user-modify-playback-state";
+            const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(
+                REDIRECT_URI
+            )}&scope=${encodeURIComponent(scopes)}`;
+            window.location.href = authUrl;
+        });
+
+        // Get access token from URL hash
+        function getAccessToken() {
+            const hash = window.location.hash.substring(1);
+            const params = new URLSearchParams(hash);
+            return params.get("access_token");
+        }
+
+        // Initialize Spotify Player
+        function initializePlayer(token) {
+            player = new Spotify.Player({
+                name: "AI Emotion Music Player",
+                getOAuthToken: (cb) => {
+                    cb(token);
+                },
+            });
+
+            player.addListener("ready", ({ device_id }) => {
+                console.log("Ready with Device ID", device_id);
+                document.getElementById("login-section").style.display = "none";
+                document.getElementById("player-interface").style.display = "block";
+                document.getElementById("login-error").style.display = "none";
+                initializeAI();
+            });
+
+            player.addListener("not_ready", ({ device_id }) => {
+                console.error("Device ID has gone offline", device_id);
+                updateStatus("Error: Spotify player not ready");
+                showPlayerError("Error: Spotify player not ready");
+            });
+            player.addListener("initialization_error", (error) => {
+                console.error("Initialization error", error);
+                updateStatus("Error initializing Spotify Player");
+                showLoginError("Error initializing Spotify Player");
+            });
+
+            player.connect();
+        }
+
+        function showLoginError(message) {
+            const errorElement = document.getElementById("login-error");
+            errorElement.textContent = message;
+            errorElement.style.display = "block";
+        }
+
+        function showPlayerError(message) {
+            const errorElement = document.getElementById("player-error");
+            errorElement.textContent = message;
+            errorElement.style.display = "block";
+        }
+
+        function showDetectionError(message) {
+            const errorElement = document.getElementById("detection-error");
+            errorElement.textContent = message;
+            errorElement.style.display = "block";
+        }
+
+        // Initialize Face API
+        async function initializeAI() {
+            try {
+                await faceapi.nets.ssdMobilenetv1.loadFromUri("/models");
+                await faceapi.nets.faceExpressionNet.loadFromUri("/models");
+                console.log("Face Api models loaded successfully");
+                updateStatus("AI models loaded successfully");
+            } catch (error) {
+                console.error("Error loading AI models", error);
+                updateStatus("Error loading AI models: " + error.message);
+                showDetectionError("Error loading AI models: " + error.message);
+            }
+        }
+
+        // Start video stream
+        async function startVideo() {
+            const video = document.getElementById("video");
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                });
+                video.srcObject = stream;
+                updateStatus("Camera started");
+            } catch (error) {
+                console.error("Error accessing camera", error);
+                updateStatus("Error accessing camera: " + error.message);
+                showDetectionError("Error accessing camera: " + error.message);
+            }
+        }
+
+        // Emotion detection
+        async function detectEmotions() {
+            const video = document.getElementById("video");
+            const canvas = document.getElementById("canvas");
+
+            if (isDetecting) {
+                try {
+                    const detections = await faceapi
+                        .detectSingleFace(video)
+                        .withFaceExpressions();
+
+                    if (detections) {
+                        const emotions = detections.expressions;
+                        const dominantEmotion = Object.entries(emotions).reduce((a, b) =>
+                            a[1] > b[1] ? a : b
+                        )[0];
+
+                        if (dominantEmotion !== currentEmotion) {
+                            currentEmotion = dominantEmotion;
+                            document.getElementById("emotion").textContent = currentEmotion;
+                            playEmotionPlaylist(currentEmotion);
+                        }
+
+                        // Draw face detection
+                        const displaySize = { width: video.width, height: video.height };
+                        faceapi.matchDimensions(canvas, displaySize);
+                        const resizedDetections = faceapi.resizeResults(
+                            detections,
+                            displaySize
+                        );
+                        canvas
+                            .getContext("2d")
+                            .clearRect(0, 0, canvas.width, canvas.height);
+                        faceapi.draw.drawFaceExpressions(canvas, resizedDetections);
+                    }
+
+                    requestAnimationFrame(detectEmotions);
+                } catch (error) {
+                    console.error("Error in detectEmotions", error);
+                    updateStatus("Error detecting emotion: " + error.message);
+                    showDetectionError("Error detecting emotion: " + error.message);
+                }
+            }
+        }
+
+        // Play emotion playlist
+        async function playEmotionPlaylist(emotion) {
+            const playlistUri =
+                EMOTION_PLAYLISTS[emotion] || EMOTION_PLAYLISTS.neutral;
+            try {
+                 await player.play({
+                  context_uri: playlistUri,
+                 });
+            } catch (error) {
+                console.error("Error playing playlist:", error);
+                updateStatus("Error playing playlist: " + error.message);
+                showPlayerError("Error playing playlist: " + error.message);
+            }
+        }
+
+        // Event Listeners
+        document
+            .getElementById("start-detection")
+            .addEventListener("click", async () => {
+                await startVideo();
+                isDetecting = true;
+                detectEmotions();
+                document.getElementById("start-detection").disabled = true;
+                document.getElementById("stop-detection").disabled = false;
+            });
+
+        document
+            .getElementById("stop-detection")
+            .addEventListener("click", () => {
+                isDetecting = false;
+                const video = document.getElementById("video");
+                if (video.srcObject) {
+                    const stream = video.srcObject;
+                    const tracks = stream.getTracks();
+                    tracks.forEach((track) => track.stop());
+                    video.srcObject = null;
+                }
+                document.getElementById("start-detection").disabled = false;
+                document.getElementById("stop-detection").disabled = true;
+                updateStatus("Status: Detection Stopped");
+            });
+
+        function updateStatus(message) {
+            document.getElementById("status").textContent = message;
+        }
+
+        // Check for access token on load
+        window.onload = async () => {
+            const token = getAccessToken();
+            if (token) {
+                accessToken = token;
+                window.history.replaceState({}, document.title, "/");
+                await faceapi.nets.ssdMobilenetv1.loadFromUri("/models");
+                await faceapi.nets.faceExpressionNet.loadFromUri("/models");
+                console.log("Face API models loaded");
+                initializePlayer(accessToken);
+            } else {
+                console.log("Access token not found");
+            }
+        };
+    </script>
+</body>
+
+</html>
